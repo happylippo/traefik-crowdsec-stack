@@ -94,6 +94,7 @@ files_to_copy=(
   "data/traefik/.env.sample data/traefik/.env"
   "data/traefik/traefik.yml.sample data/traefik/traefik.yml"
   "data/traefik/certs/acme_letsencrypt.json.sample data/traefik/certs/acme_letsencrypt.json"
+  "data/traefik/certs/acme_cloudflare.json.sample data/traefik/certs/acme_cloudflare.json"
   "data/traefik/certs/tls_letsencrypt.json.sample data/traefik/certs/tls_letsencrypt.json"
   "data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml"
   "data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sample data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml"
@@ -121,6 +122,7 @@ for file_pair in "${files_to_copy[@]}"; do
 done
 
 sudo chmod 600 data/traefik/certs/acme_letsencrypt.json
+sudo chmod 600 data/traefik/certs/acme_cloudflare.json
 sudo chmod 600 data/traefik/certs/tls_letsencrypt.json
 
 step_done "Dateien kopiert und Rechte gesetzt"
