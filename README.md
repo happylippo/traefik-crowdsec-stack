@@ -6,6 +6,11 @@ Prüfung übernimmt direkt das
 [`crowdsec-bouncer-traefik-plugin`](https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin)
 in Version `v1.7.1`.
 
+Als Reverse Proxy wird standardmäßig Traefik `v3.7.10` verwendet. Optional
+können Zertifikate über eine Cloudflare-DNS-Challenge ausgestellt und
+Cloudflare-Proxy-Verbindungen mit verifizierten Forwarded Headers verarbeitet
+werden.
+
 AppSec lauscht auf `crowdsec:7422`. Dieser Port wird nicht auf dem Host
 veröffentlicht und ist nur zwischen Traefik und CrowdSec im gemeinsamen
 Docker-Netzwerk erreichbar.
@@ -95,6 +100,8 @@ cp data/traefik/.env.sample data/traefik/.env
 cp data/traefik/traefik.yml.sample data/traefik/traefik.yml
 cp data/traefik/certs/acme_letsencrypt.json.sample data/traefik/certs/acme_letsencrypt.json
 chmod 600 data/traefik/certs/acme_letsencrypt.json
+cp data/traefik/certs/acme_cloudflare.json.sample data/traefik/certs/acme_cloudflare.json
+chmod 600 data/traefik/certs/acme_cloudflare.json
 cp data/traefik/certs/tls_letsencrypt.json.sample data/traefik/certs/tls_letsencrypt.json
 chmod 600 data/traefik/certs/tls_letsencrypt.json
 cp data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml
@@ -123,6 +130,15 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
           email: "deine@email.de"
           storage: "/etc/traefik/tls_letsencrypt.json"
           tlsChallenge: {}
+      cloudflare_resolver:
+        acme:
+          email: "deine@email.de"
+          storage: "/etc/traefik/acme_cloudflare.json"
+          dnsChallenge:
+            provider: cloudflare
+            resolvers:
+              - "1.1.1.1:53"
+              - "1.0.0.1:53"
     ```
 
 2.	In der Datei `.env` setzen Sie die gewünschte Domain für das Traefik-Dashboard:
@@ -130,6 +146,69 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
     ```bash
     SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(`traefik.yourdomain.com`)
     ```
+
+### Cloudflare DNS-Challenge verwenden
+
+Der Resolver `cloudflare_resolver` ist vorkonfiguriert, wird aber erst verwendet,
+wenn ein Router ihn ausdrücklich auswählt. Er eignet sich insbesondere für
+Wildcard-Zertifikate, die mit HTTP-01 oder TLS-ALPN-01 nicht ausgestellt werden
+können.
+
+1. Erstellen Sie bei Cloudflare ein auf die benötigte Zone eingeschränktes API-
+   Token mit diesen Berechtigungen:
+
+   - `Zone / DNS / Edit`
+   - `Zone / Zone / Read`
+
+2. Tragen Sie das Token ausschließlich in die nicht versionierte Datei
+   `data/traefik/.env` ein:
+
+    ```dotenv
+    CF_DNS_API_TOKEN=dein_cloudflare_api_token
+    ```
+
+3. Für das Traefik-Dashboard kann der Resolver in der Hauptdatei `.env`
+   ausgewählt werden:
+
+    ```dotenv
+    SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=cloudflare_resolver
+    ```
+
+   Andere Router wählen ihn entsprechend über
+   `traefik.http.routers.<router>.tls.certresolver=cloudflare_resolver` aus.
+   Für ein Wildcard-Zertifikat müssen zusätzlich Hauptdomain und Wildcard-SAN
+   am betreffenden Router beziehungsweise EntryPoint konfiguriert werden.
+
+4. Starten Sie Traefik nach der Änderung neu und kontrollieren Sie das Log:
+
+    ```bash
+    docker compose up -d traefik
+    docker compose logs --tail=100 traefik
+    ```
+
+Ohne Cloudflare-DNS-Challenge bleibt der Standardwert `tls_resolver` aktiv; das
+Feld `CF_DNS_API_TOKEN` kann dann leer bleiben.
+
+### Cloudflare als Reverse Proxy
+
+Die EntryPoints `web` und `websecure` vertrauen `X-Forwarded-*`-Headern nur,
+wenn die unmittelbare Verbindung aus einem offiziell veröffentlichten
+Cloudflare-IPv4- oder IPv6-Netz stammt. `forwardedHeaders.insecure` wird bewusst
+nicht aktiviert. Dadurch kann Traefik hinter dem Cloudflare-Proxy die
+ursprüngliche Client-IP an CrowdSec, Access-Logs und Backend-Dienste weitergeben,
+ohne entsprechende Header beliebiger Direktzugriffe zu akzeptieren.
+
+Die eingetragenen Netze stammen aus den offiziellen Listen:
+
+- [Cloudflare IPv4 ranges](https://www.cloudflare.com/ips-v4)
+- [Cloudflare IPv6 ranges](https://www.cloudflare.com/ips-v6)
+
+Cloudflare kann diese Netze künftig ändern. Vergleichen Sie die Listen daher bei
+Updates mit `data/traefik/traefik.yml`. Das Vertrauen der Forwarded Headers
+verhindert außerdem keinen direkten Zugriff auf die Origin-IP. Wenn der Server
+ausschließlich über Cloudflare erreichbar sein soll, müssen TCP 80/443 in der
+Host- oder Provider-Firewall zusätzlich auf die Cloudflare-Netze eingeschränkt
+werden. Für HTTP/3 ist gegebenenfalls auch UDP 443 entsprechend zu begrenzen.
 
 ### 6. CrowdSec konfigurieren
 1. CrowdSec Konfigurationsdatein erstellen
