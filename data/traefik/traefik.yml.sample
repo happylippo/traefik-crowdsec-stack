@@ -34,7 +34,7 @@ entryPoints:
     http:
       middlewares:
         - default@file
-        - traefik-bouncer@file
+        - crowdsec@file
 
 ping:
   entryPoint: "ping"
@@ -42,6 +42,12 @@ ping:
 global:
   checknewversion: true
   sendanonymoususage: false
+
+experimental:
+  plugins:
+    bouncer:
+      moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+      version: v1.7.1
 
 providers:
   docker:

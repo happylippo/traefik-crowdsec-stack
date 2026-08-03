@@ -1,6 +1,21 @@
 # Traefik-CrowdSec-Stacks
 
-Diese Anleitung beschreibt die manuelle Installation und Konfiguration des Traefik-CrowdSec-Stacks, ohne Verwendung des automatischen Installationsskripts. Bitte folgen Sie den Schritten sorgfältig.
+Dieser Stack kombiniert Traefik mit CrowdSec und dessen AppSec/WAF. Die frühere
+`traefik-crowdsec-bouncer`-Sidecar-Anwendung wurde vollständig entfernt. Die
+Prüfung übernimmt direkt das
+[`crowdsec-bouncer-traefik-plugin`](https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin)
+in Version `v1.7.1`.
+
+AppSec lauscht auf `crowdsec:7422`. Dieser Port wird nicht auf dem Host
+veröffentlicht und ist nur zwischen Traefik und CrowdSec im gemeinsamen
+Docker-Netzwerk erreichbar.
+
+Bei einem Update von einer älteren Version entfernt der folgende Startbefehl
+auch den nicht mehr definierten Sidecar-Container als Compose-Orphan:
+
+```bash
+docker compose up -d --remove-orphans
+```
 
 ## Voraussetzungen
 
@@ -20,7 +35,7 @@ Als erstes müssen Sie das Repository auf Ihren Server klonen:
 
 ```bash
 mkdir -p /opt/containers/
-git clone https://github.com/psycho0verload/traefik-crowdsec-stack /opt/containers/traefik-crowdsec-stack
+git clone https://github.com/happylippo/traefik-crowdsec-stack /opt/containers/traefik-crowdsec-stack
 cd /opt/containers/traefik-crowdsec-stack
 sudo chmod +x first_install.sh
 sudo ./first_install.sh
@@ -40,7 +55,7 @@ Als erstes müssen Sie das Repository auf Ihren Server klonen:
 ```bash
 sudo su
 mkdir -p /opt/containers/
-git clone https://github.com/psycho0verload/traefik-crowdsec-stack /opt/containers/traefik-crowdsec-stack
+git clone https://github.com/happylippo/traefik-crowdsec-stack /opt/containers/traefik-crowdsec-stack
 cd /opt/containers/traefik-crowdsec-stack
 ```
 
@@ -74,6 +89,7 @@ Kopieren Sie die erforderlichen Konfigurationsdateien aus den .sample-Vorlagen. 
 ```bash
 cp .env.sample .env
 cp data/crowdsec/.env.sample data/crowdsec/.env
+cp data/crowdsec/appsec.yaml.sample data/crowdsec/appsec.yaml
 cp data/socket-proxy/.env.sample data/socket-proxy/.env
 cp data/traefik/.env.sample data/traefik/.env
 cp data/traefik/traefik.yml.sample data/traefik/traefik.yml
@@ -84,10 +100,9 @@ chmod 600 data/traefik/certs/tls_letsencrypt.json
 cp data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml
 cp data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sample data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml
 cp data/traefik/dynamic_conf/http.middlewares.gzip.yml.sample data/traefik/dynamic_conf/http.middlewares.gzip.yml
-cp data/traefik/dynamic_conf/http.middlewares.traefik-bouncer.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-bouncer.yml
+cp data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample data/traefik/dynamic_conf/http.middlewares.crowdsec.yml
 cp data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml
 cp data/traefik/dynamic_conf/tls.yml.sample data/traefik/dynamic_conf/tls.yml
-cp data/traefik-crowdsec-bouncer/.env.sample data/traefik-crowdsec-bouncer/.env
 ```
 
 ### 5. SSL-Zertifikate und Domain konfigurieren
@@ -138,15 +153,71 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
     ---
     ```
 
-3. Token generieren für den CrowdSec Bouncer für Trafik
+3. API-Schlüssel für das Traefik-Plugin und den optionalen Firewall-Bouncer erzeugen:
     ```bash
-    BOUNCER_KEY_TRAEFIK=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9!@#$%^&*()-_=+[]{}<>?|')
-    BOUNCER_KEY_FIREWALL=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9!@#$%^&*()-_=+[]{}<>?|')
-    echo "BOUNCER_KEY_TRAEFIK=\"$BOUNCER_KEY_TRAEFIK\"" >> /opt/containers/traefik-crowdsec-stack/.env
-    echo "BOUNCER_KEY_FIREWALL=\"$BOUNCER_KEY_FIREWALL\"" >> /opt/containers/traefik-crowdsec-stack/.env
-    echo "Generated BOUNCER_KEY_FIREWALL: $BOUNCER_KEY_FIREWALL"
+    BOUNCER_KEY_TRAEFIK=$(openssl rand -hex 32)
+    BOUNCER_KEY_FIREWALL=$(openssl rand -hex 32)
+    sed -i "s/^BOUNCER_KEY_TRAEFIK=.*/BOUNCER_KEY_TRAEFIK=$BOUNCER_KEY_TRAEFIK/" .env
+    sed -i "s/^BOUNCER_KEY_FIREWALL=.*/BOUNCER_KEY_FIREWALL=$BOUNCER_KEY_FIREWALL/" .env
+    install -d -m 700 data/traefik/secrets
+    printf '%s' "$BOUNCER_KEY_TRAEFIK" > data/traefik/secrets/crowdsec_lapi_key
+    chmod 600 data/traefik/secrets/crowdsec_lapi_key
     ```
-4. Speichern Sie sich den Token für BOUNCER_KEY_FIREWALL! Diesen benötigen Sie später nochmal!
+4. Speichern Sie sich den Wert von `BOUNCER_KEY_FIREWALL`; dieser wird für den
+   optionalen Firewall-Bouncer benötigt. Der Traefik-Schlüssel wird dem Plugin
+   über `/run/secrets/crowdsec_lapi_key` bereitgestellt und nicht in eine
+   versionierte YAML-Datei geschrieben.
+
+5. Die beiden AppSec-Collections sind in `data/crowdsec/.env` bereits aktiviert:
+
+    ```text
+    crowdsecurity/appsec-virtual-patching
+    crowdsecurity/appsec-generic-rules
+    ```
+
+6. `data/crowdsec/appsec.yaml` aktiviert die Standardkonfiguration und den
+   internen Listener:
+
+    ```yaml
+    appsec_configs:
+      - crowdsecurity/appsec-default
+    labels:
+      type: appsec
+    listen_addr: 0.0.0.0:7422
+    source: appsec
+    ```
+
+### AppSec-Verfügbarkeit und Notfallbetrieb
+
+Die Middleware `data/traefik/dynamic_conf/http.middlewares.crowdsec.yml` ist
+standardmäßig für den Produktionsbetrieb auf **fail closed** eingestellt:
+
+```yaml
+crowdsecAppsecFailureBlock: true
+crowdsecAppsecUnreachableBlock: true
+```
+
+Antwortet AppSec mit einem internen Fehler oder ist `crowdsec:7422` nicht
+erreichbar, blockiert Traefik daher die Anfrage. Das verhindert ein unbemerktes
+Umgehen des WAF, kann bei einem CrowdSec-Ausfall aber auch legitimen Verkehr
+stoppen.
+
+Nur für einen zeitlich begrenzten Notfall können beide Werte auf `false` gesetzt
+und Traefik anschließend neu geladen werden:
+
+```bash
+sed -i 's/crowdsecAppsecFailureBlock: true/crowdsecAppsecFailureBlock: false/' data/traefik/dynamic_conf/http.middlewares.crowdsec.yml
+sed -i 's/crowdsecAppsecUnreachableBlock: true/crowdsecAppsecUnreachableBlock: false/' data/traefik/dynamic_conf/http.middlewares.crowdsec.yml
+docker compose restart traefik
+```
+
+Damit arbeitet das System vorübergehend **fail open**. Nach Behebung des
+AppSec-Problems müssen beide Werte wieder auf `true` gesetzt und Traefik erneut
+geladen werden.
+
+Die AppSec-Verbindung verwendet innerhalb des Docker-Netzwerks bewusst
+`http://crowdsec:7422`. Für diesen Port wird keine TLS- oder mTLS-Konfiguration
+vorausgesetzt; insbesondere werden keine Client-Zertifikate benötigt.
 
 ### 7. Benutzer und Passwort für das Dashboard erstellen
 
@@ -199,7 +270,7 @@ Vergewissern Sie sich, dass die von Ihnen gewählte Domain korrekt auf die IP-Ad
 Sobald alle Konfigurationen abgeschlossen sind, können Sie den Stack starten:
 
 ```bash
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
 
 ### 12. Zugriff auf das Traefik-Dashboard

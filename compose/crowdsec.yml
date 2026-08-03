@@ -22,6 +22,7 @@ services:
       - no-new-privileges=true
     volumes:
       - ${ABSOLUTE_PATH}/data/crowdsec/config:/etc/crowdsec
+      - ${ABSOLUTE_PATH}/data/crowdsec/appsec.yaml:/etc/crowdsec/acquis.d/appsec.yaml:ro
       - ${ABSOLUTE_PATH}/data/crowdsec/data:/var/lib/crowdsec/data
       - /var/log/auth.log:/var/log/auth.log:ro
       - /var/log/traefik:/var/log/traefik:ro

@@ -1,0 +1,18 @@
+http:
+  middlewares:
+    crowdsec:
+      plugin:
+        bouncer:
+          enabled: true
+          logLevel: INFO
+          crowdsecMode: stream
+          crowdsecLapiScheme: http
+          crowdsecLapiHost: crowdsec:8080
+          crowdsecLapiKeyFile: /run/secrets/crowdsec_lapi_key
+          crowdsecAppsecEnabled: true
+          crowdsecAppsecScheme: http
+          crowdsecAppsecHost: crowdsec:7422
+          crowdsecAppsecPath: "/"
+          # Produktion: AppSec-Fehler oder Nichterreichbarkeit blockieren Requests.
+          crowdsecAppsecFailureBlock: true
+          crowdsecAppsecUnreachableBlock: true
