@@ -62,7 +62,7 @@ step_done "apache2-utils installiert"
 
 # Überprüfen, ob Container laufen
 show_step $current_step $total_steps "Überprüfen von laufenden Containern"
-containers=("crowdsec" "socket-proxy" "traefik" "traefik_crowdsec_bouncer")
+containers=("crowdsec" "socket-proxy" "traefik")
 for container in "${containers[@]}"; do
   if [ "$(docker ps -q -f name=$container)" ]; then
     echo -e "${red}Der Docker-Container '$container' läuft bereits. Das Skript wird abgebrochen.${nc}"
@@ -89,6 +89,7 @@ show_step $current_step $total_steps "Kopiere erforderliche Dateien"
 files_to_copy=(
   ".env.sample .env"
   "data/crowdsec/.env.sample data/crowdsec/.env"
+  "data/crowdsec/appsec.yaml.sample data/crowdsec/appsec.yaml"
   "data/socket-proxy/.env.sample data/socket-proxy/.env"
   "data/traefik/.env.sample data/traefik/.env"
   "data/traefik/traefik.yml.sample data/traefik/traefik.yml"
@@ -97,10 +98,9 @@ files_to_copy=(
   "data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml"
   "data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sample data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml"
   "data/traefik/dynamic_conf/http.middlewares.gzip.yml.sample data/traefik/dynamic_conf/http.middlewares.gzip.yml"
-  "data/traefik/dynamic_conf/http.middlewares.traefik-bouncer.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-bouncer.yml"
+  "data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample data/traefik/dynamic_conf/http.middlewares.crowdsec.yml"
   "data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml"
   "data/traefik/dynamic_conf/tls.yml.sample data/traefik/dynamic_conf/tls.yml"
-  "data/traefik-crowdsec-bouncer/.env.sample data/traefik-crowdsec-bouncer/.env"
 )
 
 # Dateien kopieren oder das Skript beenden, wenn eine .sample Datei fehlt
@@ -153,14 +153,17 @@ command -v openssl >/dev/null 2>&1 || { sudo apt update && sudo apt install -y o
 step_done "OpenSSL überprüft"
 ((current_step++))
 
-# Bouncer-Passwörter generieren
-show_step $current_step $total_steps "Generiere Bouncer-Passwörter"
-BOUNCER_KEY_TRAEFIK_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9!@#$%^&*()-_=+[]{}<>?|')
-echo -e "\nBOUNCER_KEY_TRAEFIK=$BOUNCER_KEY_TRAEFIK_PASSWORD" >> ${SCRIPT_DIR}/.env
-sleep 3
-BOUNCER_KEY_FIREWALL_PASSWORD=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9!@#$%^&*()-_=+[]{}<>?|')
-echo "BOUNCER_KEY_FIREWALL=$BOUNCER_KEY_FIREWALL_PASSWORD" >> ${SCRIPT_DIR}/.env
-step_done "Bouncer-Passwörter generiert"
+# API-Schlüssel generieren. Der Traefik-Schlüssel wird zusätzlich als Datei
+# bereitgestellt, damit er nicht in der dynamischen Middleware-Konfiguration steht.
+show_step $current_step $total_steps "Generiere CrowdSec-API-Schlüssel"
+BOUNCER_KEY_TRAEFIK_PASSWORD=$(openssl rand -hex 32)
+BOUNCER_KEY_FIREWALL_PASSWORD=$(openssl rand -hex 32)
+sed -i "s/^BOUNCER_KEY_TRAEFIK=.*/BOUNCER_KEY_TRAEFIK=$BOUNCER_KEY_TRAEFIK_PASSWORD/" "${SCRIPT_DIR}/.env"
+sed -i "s/^BOUNCER_KEY_FIREWALL=.*/BOUNCER_KEY_FIREWALL=$BOUNCER_KEY_FIREWALL_PASSWORD/" "${SCRIPT_DIR}/.env"
+install -d -m 700 "${SCRIPT_DIR}/data/traefik/secrets"
+printf '%s' "$BOUNCER_KEY_TRAEFIK_PASSWORD" > "${SCRIPT_DIR}/data/traefik/secrets/crowdsec_lapi_key"
+chmod 600 "${SCRIPT_DIR}/data/traefik/secrets/crowdsec_lapi_key"
+step_done "CrowdSec-API-Schlüssel generiert"
 ((current_step++))
 
 # E-Mail-Adresse für SSL-Zertifikate
@@ -292,7 +295,11 @@ labels:
 ---
 EOL
 
-step_done "acquis.yaml bearbeitet"
+# AppSec läuft ausschließlich im CrowdSec-Docker-Netzwerk. Port 7422 wird
+# bewusst nicht auf dem Host veröffentlicht.
+cp "${SCRIPT_DIR}/data/crowdsec/appsec.yaml.sample" "${SCRIPT_DIR}/data/crowdsec/appsec.yaml"
+
+step_done "acquis.yaml und appsec.yaml bearbeitet"
 ((current_step++))
 
 # Firewall-Auswahl
@@ -354,7 +361,7 @@ confirmation=${confirmation:-n}  # Setzt Standardwert auf 'n', wenn keine Eingab
 
 if [[ "$confirmation" =~ ^[Yy]$ ]]; then
   echo "Starte den Stack..."
-  docker compose up -d
+  docker compose up -d --remove-orphans
   step_done "Stack gestartet"
 else
   echo -e "${red}Bitte überprüfe die Firewall und die Domain-Einstellungen, bevor du den Stack startest.${nc}"
