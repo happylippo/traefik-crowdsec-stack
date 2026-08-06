@@ -22,7 +22,7 @@ services:
       traefik.http.routers.traefik-dashboard.rule: ${SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST:-HOST(`traefik.yourdomain.com`)}
       traefik.http.routers.traefik-dashboard.service: api@internal
       traefik.http.routers.traefik-dashboard.tls: "true"
-      traefik.http.routers.traefik-dashboard.tls.certresolver: ${SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER:-tls_resolver}
+      traefik.http.routers.traefik-dashboard.tls.certresolver: ${SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER:-cloudflare_resolver}
       traefik.http.services.traefik-dashboard.loadbalancer.sticky.cookie.httpOnly: "true"
       traefik.http.services.traefik-dashboard.loadbalancer.sticky.cookie.secure: "true"
       traefik.http.routers.pingweb.rule: PathPrefix(`/ping`)
