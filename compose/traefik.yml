@@ -62,5 +62,4 @@ services:
       - ${ABSOLUTE_PATH}/data/traefik/certs/acme_cloudflare.json:/etc/traefik/acme_cloudflare.json
       - ${ABSOLUTE_PATH}/data/traefik/certs/tls_letsencrypt.json:/etc/traefik/tls_letsencrypt.json
       - ${ABSOLUTE_PATH}/data/traefik/dynamic_conf:/etc/traefik/dynamic_conf:ro
-      - ${ABSOLUTE_PATH}/data/traefik/secrets/crowdsec_lapi_key:/run/secrets/crowdsec_lapi_key:ro
       - /var/log/traefik/:/var/log/traefik/

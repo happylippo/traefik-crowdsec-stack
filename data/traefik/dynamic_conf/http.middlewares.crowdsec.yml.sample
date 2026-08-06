@@ -9,7 +9,7 @@ http:
           crowdsecLapiScheme: http
           crowdsecLapiHost: crowdsec:8080
           crowdsecLapiPath: "/"
-          crowdsecLapiKeyFile: /run/secrets/crowdsec_lapi_key
+          crowdsecLapiKey: "__BOUNCER_KEY_TRAEFIK__"
           crowdsecAppsecEnabled: true
           crowdsecAppsecScheme: http
           crowdsecAppsecHost: crowdsec:7422
