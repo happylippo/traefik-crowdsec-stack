@@ -145,10 +145,12 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
               - "1.0.0.1:53"
     ```
 
-2.	In der Datei `.env` setzen Sie die gewünschte Domain für das Traefik-Dashboard:
+2.	In der Datei `.env` setzen Sie die gewünschte Domain und das Wildcardzertifikat für das Traefik-Dashboard:
 
     ```bash
     SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(`traefik.yourdomain.com`)
+    TRAEFIK_CERT_DOMAIN=example.com
+    TRAEFIK_CERT_WILDCARD=*.example.com
     ```
 
 ### Cloudflare DNS-Challenge verwenden
@@ -315,7 +317,7 @@ Erstellen Sie einen Benutzer und ein Passwort für die HTTP-Basic-Authentifizier
 htpasswd -c /opt/containers/traefik-crowdsec-stack/data/traefik/.htpasswd <deinBenutzername>
 ```
 
-### 8. Firewall Bouncer
+### 8. Firewall Bouncer (optional)
 1. Installieren Sie die Repositories von CrowdSec
     ```bash
     curl -s https://install.crowdsec.net | sudo sh
@@ -343,17 +345,26 @@ Der `BOUNCER_KEY_FIREWALL` sollte der Wert sein, den Sie generiert haben (in Sch
     systemctl enable crowdsec-firewall-bouncer
     systemctl restart crowdsec-firewall-bouncer
     ```
+### 9. Firwall UFW-Docker (optional)
 
+Wenn ufw-docker installiert ist kann folgendes freigegeben werden:
 
-### 9. Firewall-Ports überprüfen
+```bash
+sudo ufw-docker allow traefik 443/tcp proxy
+sudo ufw-docker allow traefik 443/tcp crowdsec
+sudo ufw-docker allow traefik 443/udp proxy
+sudo ufw-docker allow traefik 443/udp crowdsec
+```
+
+### 10. Firewall-Ports überprüfen
 
 Stellen Sie sicher, dass die Firewall die Ports 80 (HTTP) und 443 (HTTPS) freigibt.
 
-### 10. Domain überprüfen
+### 11. Domain überprüfen
 
 Vergewissern Sie sich, dass die von Ihnen gewählte Domain korrekt auf die IP-Adresse des Servers verweist.
 
-### 11. Stack starten
+### 12. Stack starten
 
 Sobald alle Konfigurationen abgeschlossen sind, können Sie den Stack starten:
 
@@ -361,7 +372,7 @@ Sobald alle Konfigurationen abgeschlossen sind, können Sie den Stack starten:
 docker compose up -d --remove-orphans
 ```
 
-### 12. Zugriff auf das Traefik-Dashboard
+### 13. Zugriff auf das Traefik-Dashboard
 
 Das Traefik-Dashboard sollte nun über die von Ihnen konfigurierte Domain erreichbar sein. Sie werden zur Eingabe des HTTP-Basic-Auth-Benutzernamens und Passworts aufgefordert.
 
