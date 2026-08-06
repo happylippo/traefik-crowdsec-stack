@@ -96,6 +96,7 @@ files_to_copy=(
   "data/traefik/traefik.yml.sample data/traefik/traefik.yml"
   "data/traefik/certs/acme_letsencrypt.json.sample data/traefik/certs/acme_letsencrypt.json"
   "data/traefik/certs/acme_cloudflare.json.sample data/traefik/certs/acme_cloudflare.json"
+  "data/traefik/certs/acme_desec.json.sample data/traefik/certs/acme_desec.json"
   "data/traefik/certs/tls_letsencrypt.json.sample data/traefik/certs/tls_letsencrypt.json"
   "data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml"
   "data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sample data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml"
@@ -125,6 +126,7 @@ chmod 600 data/traefik/.htpasswd
 chmod 600 data/traefik/.env
 chmod 600 data/traefik/certs/acme_letsencrypt.json
 chmod 600 data/traefik/certs/acme_cloudflare.json
+chmod 600 data/traefik/certs/acme_desec.json
 chmod 600 data/traefik/certs/tls_letsencrypt.json
 
 step_done "Dateien kopiert und Rechte gesetzt"
@@ -229,104 +231,151 @@ sed -i "s/email: \".*\"/email: \"$ssl_email\"/g" "$traefik_config_file"
 step_done "SSL-Zertifikat E-Mail-Adresse gesetzt"
 ((current_step++))
 
-# Domains und Cloudflare DNS-Challenge konfigurieren
-show_step $current_step $total_steps "Konfiguriere Domains und Cloudflare DNS-Challenge"
+# Domains, Zertifikatsresolver und optionale Cloudflare-Proxy-Netze konfigurieren
+show_step $current_step $total_steps "Konfiguriere Domains und Zertifikatsresolver"
 
-# Überprüfen, ob die .env-Datei existiert
 env_file="${SCRIPT_DIR}/.env"
-if [ ! -f "$env_file" ]; then
-  echo -e "\e[31mDie Datei $env_file existiert nicht. Das Skript wird abgebrochen.\e[0m"
-  exit 1
-fi
+traefik_env_file="${SCRIPT_DIR}/data/traefik/.env"
+traefik_config_file="${SCRIPT_DIR}/data/traefik/traefik.yml"
 
-# Funktion zur Validierung der Domain ohne http/https und ohne Slash
-validate_domain() {
-  local domain_regex="^([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}$"
-  if [[ $1 =~ $domain_regex ]]; then
-    return 0  # Gültige Domain
-  else
-    return 1  # Ungültige Domain
-  fi
-}
-
-# Benutzer nach der Wunsch-Domain fragen
-while true; do
-  read -p "Bitte gib die Wunsch-Domain für dein Traefik-Dashboard ein (ohne http/https und ohne '/'): " dashboard_domain
-
-  # Entferne mögliche "http://", "https://", und Slashes am Anfang und Ende
-  dashboard_domain=$(echo "$dashboard_domain" | sed -e 's|^http[s]\?://||' -e 's|/$||')
-
-  # Überprüfen, ob das Format der Domain korrekt ist
-  if validate_domain "$dashboard_domain"; then
-    # Bestätigung der Domain mit y/n (Standard: y)
-    read -p "Möchtest du diese Domain verwenden? ($dashboard_domain) [y/n, Standard: y]: " confirm_domain
-    confirm_domain=${confirm_domain:-y}  # Standardwert auf 'y' setzen
-    confirm_domain=$(echo "$confirm_domain" | tr '[:upper:]' '[:lower:]')  # In Kleinbuchstaben umwandeln
-
-    if [ "$confirm_domain" == "y" ]; then
-      echo "Domain wurde bestätigt: $dashboard_domain"
-      break
-    else
-      echo -e "\e[31mDomain wurde nicht bestätigt. Bitte gib eine neue Domain ein.\e[0m"
-    fi
-  else
-    echo -e "\e[31mUngültiges Domain-Format. Bitte versuche es erneut.\e[0m"
+for required_file in "$env_file" "$traefik_env_file" "$traefik_config_file"; do
+  if [ ! -f "$required_file" ]; then
+    echo -e "${red}Die Datei $required_file existiert nicht. Das Skript wird abgebrochen.${nc}"
+    exit 1
   fi
 done
 
-# Wunsch-Domain in der .env-Datei setzen
-sed -i "s/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=.*/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(\`$dashboard_domain\`)/" "$env_file"
+validate_domain() {
+  local domain_regex="^([a-zA-Z0-9][-a-zA-Z0-9]*\\.)+[a-zA-Z]{2,}$"
+  [[ $1 =~ $domain_regex ]]
+}
 
-# Hauptdomain für das Wildcard-Zertifikat abfragen. Der Wildcard-SAN wird
-# automatisch aus derselben Domain gebildet.
 while true; do
-  read -p "Bitte gib die Hauptdomain für das Zertifikat ein (z. B. example.com): " cert_domain
-  cert_domain=$(echo "$cert_domain" | sed -e 's|^http[s]\?://||' -e 's|^\*\.||' -e 's|/$||')
+  read -p "Bitte gib die Wunsch-Domain für dein Traefik-Dashboard ein (ohne http/https): " dashboard_domain
+  dashboard_domain=$(echo "$dashboard_domain" | sed -e 's|^http[s]\\?://||' -e 's|/$||')
 
-  if validate_domain "$cert_domain"; then
-    read -p "Zertifikat für $cert_domain und *.$cert_domain konfigurieren? [Y/n]: " confirm_cert_domain
-    confirm_cert_domain=${confirm_cert_domain:-y}
-    confirm_cert_domain=$(echo "$confirm_cert_domain" | tr '[:upper:]' '[:lower:]')
-    if [ "$confirm_cert_domain" = "y" ]; then
-      break
-    fi
+  if validate_domain "$dashboard_domain"; then
+    read -p "Möchtest du diese Domain verwenden? ($dashboard_domain) [Y/n]: " confirm_domain
+    confirm_domain=${confirm_domain:-y}
+    confirm_domain=$(echo "$confirm_domain" | tr '[:upper:]' '[:lower:]')
+    [ "$confirm_domain" = "y" ] && break
   else
     echo -e "${red}Ungültiges Domain-Format. Bitte versuche es erneut.${nc}"
   fi
 done
 
-sed -i "s/^TRAEFIK_CERT_DOMAIN=.*/TRAEFIK_CERT_DOMAIN=$cert_domain/" "$env_file"
-sed -i "s/^TRAEFIK_CERT_WILDCARD=.*/TRAEFIK_CERT_WILDCARD=*.$cert_domain/" "$env_file"
+sed -i "s/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=.*/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(\\`$dashboard_domain\\`)/" "$env_file"
 
-# Cloudflare API-Token verdeckt abfragen und in Traefiks nicht versionierte
-# Umgebungsdatei schreiben.
-traefik_env_file="${SCRIPT_DIR}/data/traefik/.env"
-if [ ! -f "$traefik_env_file" ]; then
-  echo -e "${red}Die Datei $traefik_env_file existiert nicht.${nc}"
-  exit 1
-fi
-
+echo "Welcher Zertifikatsresolver soll verwendet werden?"
+echo "1) tls_resolver        (TLS-ALPN-01, kein API-Token, keine Wildcards)"
+echo "2) cloudflare_resolver (DNS-01, Cloudflare API-Token, Wildcards möglich)"
+echo "3) desec_resolver      (DNS-01, deSEC Domain-Token, Wildcards möglich)"
 while true; do
-  read -rsp "Bitte gib den Cloudflare DNS API-Token ein: " cloudflare_api_token
-  echo
-  if [[ "$cloudflare_api_token" =~ ^[A-Za-z0-9_-]+$ ]]; then
-    read -p "Cloudflare API-Token übernehmen? [Y/n]: " confirm_cloudflare_token
-    confirm_cloudflare_token=${confirm_cloudflare_token:-y}
-    confirm_cloudflare_token=$(echo "$confirm_cloudflare_token" | tr '[:upper:]' '[:lower:]')
-    if [ "$confirm_cloudflare_token" = "y" ]; then
-      break
-    fi
-  else
-    echo -e "${red}Der Token ist leer oder enthält ungültige Zeichen.${nc}"
-  fi
+  read -p "Bitte wähle den Resolver [1-3]: " resolver_choice
+  case "$resolver_choice" in
+    1) selected_resolver="tls_resolver"; break ;;
+    2) selected_resolver="cloudflare_resolver"; break ;;
+    3) selected_resolver="desec_resolver"; break ;;
+    *) echo -e "${red}Ungültige Auswahl. Bitte wähle 1, 2 oder 3.${nc}" ;;
+  esac
 done
 
-sed -i "s|^CF_DNS_API_TOKEN=.*|CF_DNS_API_TOKEN=$cloudflare_api_token|" "$traefik_env_file"
-chmod 600 "$env_file" "$traefik_env_file"
-unset cloudflare_api_token
+sed -i "s/^SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=.*/SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=$selected_resolver/" "$env_file"
 
-# Schritt abgeschlossen
-step_done "Domains und Cloudflare DNS-Challenge konfiguriert"
+# Nicht gewählte Provider-Credentials bleiben leer.
+sed -i "s|^CF_DNS_API_TOKEN=.*|CF_DNS_API_TOKEN=|" "$traefik_env_file"
+sed -i "s|^DESEC_TOKEN=.*|DESEC_TOKEN=|" "$traefik_env_file"
+
+case "$selected_resolver" in
+  tls_resolver)
+    # TLS-ALPN-01 unterstützt keine Wildcard-Zertifikate.
+    sed -i "s/^TRAEFIK_CERT_DOMAIN=.*/TRAEFIK_CERT_DOMAIN=$dashboard_domain/" "$env_file"
+    sed -i "s/^TRAEFIK_CERT_WILDCARD=.*/TRAEFIK_CERT_WILDCARD=$dashboard_domain/" "$env_file"
+    ;;
+  cloudflare_resolver|desec_resolver)
+    while true; do
+      read -p "Bitte gib die Hauptdomain für das Wildcard-Zertifikat ein (z. B. example.com): " cert_domain
+      cert_domain=$(echo "$cert_domain" | sed -e 's|^http[s]\\?://||' -e 's|^\\*\\.||' -e 's|/$||')
+      if validate_domain "$cert_domain"; then
+        read -p "Zertifikat für $cert_domain und *.$cert_domain konfigurieren? [Y/n]: " confirm_cert_domain
+        confirm_cert_domain=${confirm_cert_domain:-y}
+        confirm_cert_domain=$(echo "$confirm_cert_domain" | tr '[:upper:]' '[:lower:]')
+        [ "$confirm_cert_domain" = "y" ] && break
+      else
+        echo -e "${red}Ungültiges Domain-Format. Bitte versuche es erneut.${nc}"
+      fi
+    done
+    sed -i "s/^TRAEFIK_CERT_DOMAIN=.*/TRAEFIK_CERT_DOMAIN=$cert_domain/" "$env_file"
+    sed -i "s/^TRAEFIK_CERT_WILDCARD=.*/TRAEFIK_CERT_WILDCARD=*.$cert_domain/" "$env_file"
+
+    if [ "$selected_resolver" = "cloudflare_resolver" ]; then
+      credential_label="Cloudflare DNS API-Token"
+      credential_variable="CF_DNS_API_TOKEN"
+    else
+      credential_label="deSEC Domain-Token"
+      credential_variable="DESEC_TOKEN"
+    fi
+
+    while true; do
+      read -rsp "Bitte gib den $credential_label ein: " dns_api_token
+      echo
+      if [[ "$dns_api_token" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        read -p "$credential_label übernehmen? [Y/n]: " confirm_dns_token
+        confirm_dns_token=${confirm_dns_token:-y}
+        confirm_dns_token=$(echo "$confirm_dns_token" | tr '[:upper:]' '[:lower:]')
+        [ "$confirm_dns_token" = "y" ] && break
+      else
+        echo -e "${red}Der Token ist leer oder enthält ungültige Zeichen.${nc}"
+      fi
+    done
+
+    sed -i "s|^$credential_variable=.*|$credential_variable=$dns_api_token|" "$traefik_env_file"
+    unset dns_api_token
+    ;;
+esac
+
+read -p "Sollen die offiziellen Cloudflare-IP-Netze als trustedIPs für Forwarded Headers eingetragen werden? [y/N]: " add_cloudflare_trusted_ips
+add_cloudflare_trusted_ips=${add_cloudflare_trusted_ips:-n}
+add_cloudflare_trusted_ips=$(echo "$add_cloudflare_trusted_ips" | tr '[:upper:]' '[:lower:]')
+
+if [ "$add_cloudflare_trusted_ips" = "y" ]; then
+  cloudflare_headers_tmp=$(mktemp)
+  cat > "$cloudflare_headers_tmp" <<'EOF'
+    forwardedHeaders:
+      trustedIPs:
+        - "173.245.48.0/20"
+        - "103.21.244.0/22"
+        - "103.22.200.0/22"
+        - "103.31.4.0/22"
+        - "141.101.64.0/18"
+        - "108.162.192.0/18"
+        - "190.93.240.0/20"
+        - "188.114.96.0/20"
+        - "197.234.240.0/22"
+        - "198.41.128.0/17"
+        - "162.158.0.0/15"
+        - "104.16.0.0/13"
+        - "104.24.0.0/14"
+        - "172.64.0.0/13"
+        - "131.0.72.0/22"
+        - "2400:cb00::/32"
+        - "2606:4700::/32"
+        - "2803:f800::/32"
+        - "2405:b500::/32"
+        - "2405:8100::/32"
+        - "2a06:98c0::/29"
+        - "2c0f:f248::/32"
+EOF
+  sed -i "/# __CLOUDFLARE_FORWARDED_HEADERS_WEB__/r $cloudflare_headers_tmp" "$traefik_config_file"
+  sed -i "/# __CLOUDFLARE_FORWARDED_HEADERS_WEBSECURE__/r $cloudflare_headers_tmp" "$traefik_config_file"
+  rm -f "$cloudflare_headers_tmp"
+fi
+
+sed -i '/# __CLOUDFLARE_FORWARDED_HEADERS_WEB__/d' "$traefik_config_file"
+sed -i '/# __CLOUDFLARE_FORWARDED_HEADERS_WEBSECURE__/d' "$traefik_config_file"
+chmod 600 "$env_file" "$traefik_env_file"
+
+step_done "Domains und Zertifikatsresolver konfiguriert"
 ((current_step++))
 
 # CrowdSec und Firewall-Konfiguration

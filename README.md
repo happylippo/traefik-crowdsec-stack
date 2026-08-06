@@ -47,11 +47,13 @@ sudo ./first_install.sh
 ```
 
 Das Installationsskript fragt interaktiv nach Dashboard-Domain,
-Zertifikats-Hauptdomain, Cloudflare-DNS-API-Token sowie Benutzername und Passwort
-für das Traefik-Dashboard. Aus der Zertifikats-Hauptdomain werden
-`TRAEFIK_CERT_DOMAIN` und `TRAEFIK_CERT_WILDCARD` automatisch gesetzt. Der
-Cloudflare-Token wird verdeckt eingegeben und ausschließlich in der lokalen
-`data/traefik/.env` gespeichert.
+Zertifikatsresolver, Zertifikats-Hauptdomain sowie Benutzername und Passwort für
+das Traefik-Dashboard. Zur Auswahl stehen `tls_resolver`,
+`cloudflare_resolver` und `desec_resolver`. Nur für den gewählten
+DNS-Challenge-Resolver wird der zugehörige Token verdeckt abgefragt und
+ausschließlich in `data/traefik/.env` gespeichert. Zusätzlich kann ausgewählt
+werden, ob die offiziellen Cloudflare-Netze als vertrauenswürdige Forwarded-
+Header-Proxys in Traefik eingetragen werden sollen.
 
 ## Manuelle Anleitung
 ![Ubuntu 20.04 - Testing](https://img.shields.io/badge/Ubuntu_20.04-07--10--2024-orange?logo=ubuntu)
@@ -109,6 +111,8 @@ cp data/traefik/certs/acme_letsencrypt.json.sample data/traefik/certs/acme_letse
 chmod 600 data/traefik/certs/acme_letsencrypt.json
 cp data/traefik/certs/acme_cloudflare.json.sample data/traefik/certs/acme_cloudflare.json
 chmod 600 data/traefik/certs/acme_cloudflare.json
+cp data/traefik/certs/acme_desec.json.sample data/traefik/certs/acme_desec.json
+chmod 600 data/traefik/certs/acme_desec.json
 cp data/traefik/certs/tls_letsencrypt.json.sample data/traefik/certs/tls_letsencrypt.json
 chmod 600 data/traefik/certs/tls_letsencrypt.json
 cp data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml
@@ -150,6 +154,16 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
             resolvers:
               - "1.1.1.1:53"
               - "1.0.0.1:53"
+      desec_resolver:
+        acme:
+          email: "deine@email.de"
+          storage: "/etc/traefik/acme_desec.json"
+          keyType: EC384
+          dnsChallenge:
+            provider: desec
+            resolvers:
+              - "1.1.1.1:53"
+              - "1.0.0.1:53"
     ```
 
 2.	In der Datei `.env` setzen Sie die gewünschte Domain und das Wildcardzertifikat für das Traefik-Dashboard:
@@ -160,68 +174,139 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
     TRAEFIK_CERT_WILDCARD=*.example.com
     ```
 
-### Cloudflare DNS-Challenge verwenden
+### Zertifikatsresolver auswählen
 
-Der Resolver `cloudflare_resolver` ist vorkonfiguriert, wird aber erst verwendet,
-wenn ein Router ihn ausdrücklich auswählt. Er eignet sich insbesondere für
-Wildcard-Zertifikate, die mit HTTP-01 oder TLS-ALPN-01 nicht ausgestellt werden
-können.
+Der vom Dashboard-Router verwendete Resolver wird in der Hauptdatei `.env`
+festgelegt:
 
-1. Erstellen Sie bei Cloudflare ein auf die benötigte Zone eingeschränktes API-
-   Token mit diesen Berechtigungen:
+```dotenv
+SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=tls_resolver
+```
 
-   - `Zone / DNS / Edit`
-   - `Zone / Zone / Read`
+Erlaubte Werte dieses Stacks sind:
 
-2. Tragen Sie das Token ausschließlich in die nicht versionierte Datei
-   `data/traefik/.env` ein:
+- `tls_resolver`: TLS-ALPN-01 über Port 443; benötigt keinen DNS-API-Token,
+  unterstützt aber keine Wildcard-Zertifikate. Hauptdomain und SAN werden daher
+  beide auf die konkrete Dashboard-Domain gesetzt.
+- `cloudflare_resolver`: DNS-01 über Cloudflare; unterstützt Hauptdomain und
+  Wildcard-SAN.
+- `desec_resolver`: DNS-01 über deSEC; unterstützt Hauptdomain und
+  Wildcard-SAN.
 
-    ```dotenv
-    CF_DNS_API_TOKEN=dein_cloudflare_api_token
-    ```
+Für `tls_resolver` sollte nur die konkrete Dashboard-Domain gesetzt werden:
 
-3. Für das Traefik-Dashboard kann der Resolver in der Hauptdatei `.env`
-   ausgewählt werden:
+```dotenv
+TRAEFIK_CERT_DOMAIN=traefik.example.com
+TRAEFIK_CERT_WILDCARD=traefik.example.com
+```
 
-    ```dotenv
-    SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=cloudflare_resolver
-    ```
+Für einen DNS-Challenge-Resolver können Hauptdomain und Wildcard verwendet
+werden:
 
-   Andere Router wählen ihn entsprechend über
-   `traefik.http.routers.<router>.tls.certresolver=cloudflare_resolver` aus.
-   Für ein Wildcard-Zertifikat müssen zusätzlich Hauptdomain und Wildcard-SAN
-   am betreffenden Router beziehungsweise EntryPoint konfiguriert werden.
+```dotenv
+TRAEFIK_CERT_DOMAIN=example.com
+TRAEFIK_CERT_WILDCARD=*.example.com
+```
 
-4. Starten Sie Traefik nach der Änderung neu und kontrollieren Sie das Log:
+#### Cloudflare DNS-Challenge
 
-    ```bash
-    docker compose up -d traefik
-    docker compose logs --tail=100 traefik
-    ```
+Erstellen Sie ein auf die benötigte Zone eingeschränktes API-Token mit:
 
-Ohne Cloudflare-DNS-Challenge bleibt der Standardwert `tls_resolver` aktiv; das
-Feld `CF_DNS_API_TOKEN` kann dann leer bleiben.
+- `Zone / DNS / Edit`
+- `Zone / Zone / Read`
+
+Tragen Sie ausschließlich in `data/traefik/.env` ein:
+
+```dotenv
+CF_DNS_API_TOKEN=dein_cloudflare_api_token
+DESEC_TOKEN=
+```
+
+Und wählen Sie in `.env`:
+
+```dotenv
+SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=cloudflare_resolver
+```
+
+#### deSEC DNS-Challenge
+
+Erstellen Sie bei deSEC einen Domain-Token für die betreffende Zone. Der
+deSEC-Provider von Traefik beziehungsweise Lego verwendet die Variable
+`DESEC_TOKEN`. Tragen Sie ausschließlich in `data/traefik/.env` ein:
+
+```dotenv
+CF_DNS_API_TOKEN=
+DESEC_TOKEN=dein_desec_domain_token
+```
+
+Und wählen Sie in `.env`:
+
+```dotenv
+SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=desec_resolver
+```
+
+Für jeden Resolver gilt: Seine ACME-Speicherdatei muss vorhanden sein, mit
+`chmod 600` geschützt und in den Traefik-Container gemountet werden. Die
+mitgelieferten Compose- und Sample-Dateien berücksichtigen
+`tls_letsencrypt.json`, `acme_cloudflare.json` und `acme_desec.json`.
+
+Nach einer Änderung Traefik neu erstellen und das Log kontrollieren:
+
+```bash
+docker compose up -d --force-recreate traefik
+docker compose logs --tail=100 traefik
+```
 
 ### Cloudflare als Reverse Proxy
 
-Die EntryPoints `web` und `websecure` vertrauen `X-Forwarded-*`-Headern nur,
-wenn die unmittelbare Verbindung aus einem offiziell veröffentlichten
-Cloudflare-IPv4- oder IPv6-Netz stammt. `forwardedHeaders.insecure` wird bewusst
-nicht aktiviert. Dadurch kann Traefik hinter dem Cloudflare-Proxy die
-ursprüngliche Client-IP an CrowdSec, Access-Logs und Backend-Dienste weitergeben,
-ohne entsprechende Header beliebiger Direktzugriffe zu akzeptieren.
+Die Cloudflare-Netze für `forwardedHeaders.trustedIPs` sind in
+`data/traefik/traefik.yml.sample` nicht standardmäßig aktiviert. Das
+Installationsskript fragt, ob sie in die erzeugte `data/traefik/traefik.yml`
+eingetragen werden sollen. Diese Auswahl ist unabhängig vom Zertifikatsresolver:
+Cloudflare kann beispielsweise als Proxy verwendet werden, während deSEC die
+DNS-Challenge übernimmt.
 
-Die eingetragenen Netze stammen aus den offiziellen Listen:
+Für die manuelle Konfiguration fügen Sie unter den EntryPoints `web` und
+`websecure` jeweils folgenden Block ein:
+
+```yaml
+forwardedHeaders:
+  trustedIPs:
+    - "173.245.48.0/20"
+    - "103.21.244.0/22"
+    - "103.22.200.0/22"
+    - "103.31.4.0/22"
+    - "141.101.64.0/18"
+    - "108.162.192.0/18"
+    - "190.93.240.0/20"
+    - "188.114.96.0/20"
+    - "197.234.240.0/22"
+    - "198.41.128.0/17"
+    - "162.158.0.0/15"
+    - "104.16.0.0/13"
+    - "104.24.0.0/14"
+    - "172.64.0.0/13"
+    - "131.0.72.0/22"
+    - "2400:cb00::/32"
+    - "2606:4700::/32"
+    - "2803:f800::/32"
+    - "2405:b500::/32"
+    - "2405:8100::/32"
+    - "2a06:98c0::/29"
+    - "2c0f:f248::/32"
+```
+
+Die Netze stammen aus den offiziellen Listen:
 
 - [Cloudflare IPv4 ranges](https://www.cloudflare.com/ips-v4)
 - [Cloudflare IPv6 ranges](https://www.cloudflare.com/ips-v6)
 
-Cloudflare kann diese Netze künftig ändern. Vergleichen Sie die Listen daher bei
-Updates mit `data/traefik/traefik.yml`. Das Vertrauen der Forwarded Headers
-verhindert außerdem keinen direkten Zugriff auf die Origin-IP. Wenn der Server
-ausschließlich über Cloudflare erreichbar sein soll, müssen TCP 80/443 in der
-Host- oder Provider-Firewall zusätzlich auf die Cloudflare-Netze eingeschränkt
-werden. Für HTTP/3 ist gegebenenfalls auch UDP 443 entsprechend zu begrenzen.
+Vergleichen Sie die Listen bei Updates mit Ihrer lokalen
+`data/traefik/traefik.yml`. Vertrauen in Forwarded Headers verhindert keinen
+direkten Zugriff auf die Origin-IP. Soll der Origin ausschließlich über
+Cloudflare erreichbar sein, müssen TCP 80/443 und gegebenenfalls UDP 443
+zusätzlich in Host- und Provider-Firewall auf Cloudflares Netze beschränkt
+werden.
 
 ### 6. CrowdSec konfigurieren
 1. CrowdSec Konfigurationsdatein erstellen
