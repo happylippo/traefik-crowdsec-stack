@@ -107,11 +107,8 @@ chmod 600 data/traefik/certs/tls_letsencrypt.json
 cp data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml
 cp data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sample data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml
 cp data/traefik/dynamic_conf/http.middlewares.gzip.yml.sample data/traefik/dynamic_conf/http.middlewares.gzip.yml
-cp data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample data/traefik/dynamic_conf/http.middlewares.crowdsec.yml
 cp data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml
 cp data/traefik/dynamic_conf/tls.yml.sample data/traefik/dynamic_conf/tls.yml
-cp data/traefik/secrets/crowdsec_lapi_key.sample data/traefik/secrets/crowdsec_lapi_key
-chmod 600 data/traefik/secrets/crowdsec_lapi_key
 ```
 
 ### 5. SSL-Zertifikate und Domain konfigurieren
@@ -243,14 +240,19 @@ werden. Für HTTP/3 ist gegebenenfalls auch UDP 443 entsprechend zu begrenzen.
     BOUNCER_KEY_FIREWALL=$(openssl rand -hex 32)
     sed -i "s/^BOUNCER_KEY_TRAEFIK=.*/BOUNCER_KEY_TRAEFIK=$BOUNCER_KEY_TRAEFIK/" .env
     sed -i "s/^BOUNCER_KEY_FIREWALL=.*/BOUNCER_KEY_FIREWALL=$BOUNCER_KEY_FIREWALL/" .env
-    install -d -m 700 data/traefik/secrets
-    printf '%s' "$BOUNCER_KEY_TRAEFIK" > data/traefik/secrets/crowdsec_lapi_key
-    chmod 600 data/traefik/secrets/crowdsec_lapi_key
+    umask 077
+    sed "s/__BOUNCER_KEY_TRAEFIK__/$BOUNCER_KEY_TRAEFIK/" \
+      data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample \
+      > data/traefik/dynamic_conf/http.middlewares.crowdsec.yml
+    chmod 600 data/traefik/dynamic_conf/http.middlewares.crowdsec.yml
     ```
 4. Speichern Sie sich den Wert von `BOUNCER_KEY_FIREWALL`; dieser wird für den
-   optionalen Firewall-Bouncer benötigt. Der Traefik-Schlüssel wird dem Plugin
-   über `/run/secrets/crowdsec_lapi_key` bereitgestellt und nicht in eine
-   versionierte YAML-Datei geschrieben.
+   optionalen Firewall-Bouncer benötigt. Der Traefik-Schlüssel wird als
+   `crowdsecLapiKey` in die lokale, nicht versionierte Middleware-Datei
+   geschrieben. Traefiks File-Provider ersetzt keine Umgebungsvariablen in
+   dynamischen YAML-Dateien; deshalb muss die Datei vor dem Start aus der
+   Vorlage erzeugt werden. Prüfen Sie vor einem Commit mit `git status`, dass
+   `data/traefik/dynamic_conf/http.middlewares.crowdsec.yml` ignoriert bleibt.
 
 5. Die beiden AppSec-Collections sind in `data/crowdsec/.env` bereits aktiviert:
 
