@@ -99,7 +99,6 @@ files_to_copy=(
   "data/traefik/dynamic_conf/http.middlewares.default.yml.sample data/traefik/dynamic_conf/http.middlewares.default.yml"
   "data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sample data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml"
   "data/traefik/dynamic_conf/http.middlewares.gzip.yml.sample data/traefik/dynamic_conf/http.middlewares.gzip.yml"
-  "data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample data/traefik/dynamic_conf/http.middlewares.crowdsec.yml"
   "data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml"
   "data/traefik/dynamic_conf/tls.yml.sample data/traefik/dynamic_conf/tls.yml"
 )
@@ -155,16 +154,26 @@ command -v openssl >/dev/null 2>&1 || { sudo apt update && sudo apt install -y o
 step_done "OpenSSL überprüft"
 ((current_step++))
 
-# API-Schlüssel generieren. Der Traefik-Schlüssel wird zusätzlich als Datei
-# bereitgestellt, damit er nicht in der dynamischen Middleware-Konfiguration steht.
+# API-Schlüssel generieren. Die produktive Middleware-Datei wird aus der
+# versionierten Vorlage erzeugt und bleibt durch .gitignore unveröffentlicht.
 show_step $current_step $total_steps "Generiere CrowdSec-API-Schlüssel"
 BOUNCER_KEY_TRAEFIK_PASSWORD=$(openssl rand -hex 32)
 BOUNCER_KEY_FIREWALL_PASSWORD=$(openssl rand -hex 32)
 sed -i "s/^BOUNCER_KEY_TRAEFIK=.*/BOUNCER_KEY_TRAEFIK=$BOUNCER_KEY_TRAEFIK_PASSWORD/" "${SCRIPT_DIR}/.env"
 sed -i "s/^BOUNCER_KEY_FIREWALL=.*/BOUNCER_KEY_FIREWALL=$BOUNCER_KEY_FIREWALL_PASSWORD/" "${SCRIPT_DIR}/.env"
-install -d -m 700 "${SCRIPT_DIR}/data/traefik/secrets"
-printf '%s' "$BOUNCER_KEY_TRAEFIK_PASSWORD" > "${SCRIPT_DIR}/data/traefik/secrets/crowdsec_lapi_key"
-chmod 600 "${SCRIPT_DIR}/data/traefik/secrets/crowdsec_lapi_key"
+
+crowdsec_middleware_template="${SCRIPT_DIR}/data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample"
+crowdsec_middleware_config="${SCRIPT_DIR}/data/traefik/dynamic_conf/http.middlewares.crowdsec.yml"
+
+umask 077
+sed "s/__BOUNCER_KEY_TRAEFIK__/$BOUNCER_KEY_TRAEFIK_PASSWORD/" \
+  "$crowdsec_middleware_template" > "$crowdsec_middleware_config"
+chmod 600 "$crowdsec_middleware_config"
+
+if grep -q "__BOUNCER_KEY_TRAEFIK__" "$crowdsec_middleware_config"; then
+  echo -e "${red}Der CrowdSec-LAPI-Key konnte nicht in die Middleware-Konfiguration eingesetzt werden.${nc}"
+  exit 1
+fi
 step_done "CrowdSec-API-Schlüssel generiert"
 ((current_step++))
 
