@@ -111,7 +111,6 @@ cp data/traefik/dynamic_conf/http.middlewares.crowdsec.yml.sample data/traefik/d
 cp data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml
 cp data/traefik/dynamic_conf/tls.yml.sample data/traefik/dynamic_conf/tls.yml
 touch data/traefik/secrets/crowdsec_lapi_key
-chmod 600 data/traefik/secrets/crowdsec_lapi_key
 ```
 
 ### 5. SSL-Zertifikate und Domain konfigurieren
