@@ -92,6 +92,7 @@ files_to_copy=(
   "data/crowdsec/appsec.yaml.sample data/crowdsec/appsec.yaml"
   "data/socket-proxy/.env.sample data/socket-proxy/.env"
   "data/traefik/.env.sample data/traefik/.env"
+  "data/traefik/.htpasswd.sample data/traefik/.htpasswd"
   "data/traefik/traefik.yml.sample data/traefik/traefik.yml"
   "data/traefik/certs/acme_letsencrypt.json.sample data/traefik/certs/acme_letsencrypt.json"
   "data/traefik/certs/acme_cloudflare.json.sample data/traefik/certs/acme_cloudflare.json"
@@ -120,9 +121,11 @@ for file_pair in "${files_to_copy[@]}"; do
   fi
 done
 
-sudo chmod 600 data/traefik/certs/acme_letsencrypt.json
-sudo chmod 600 data/traefik/certs/acme_cloudflare.json
-sudo chmod 600 data/traefik/certs/tls_letsencrypt.json
+chmod 600 data/traefik/.htpasswd
+chmod 600 data/traefik/.env
+chmod 600 data/traefik/certs/acme_letsencrypt.json
+chmod 600 data/traefik/certs/acme_cloudflare.json
+chmod 600 data/traefik/certs/tls_letsencrypt.json
 
 step_done "Dateien kopiert und Rechte gesetzt"
 ((current_step++))
@@ -226,8 +229,8 @@ sed -i "s/email: \".*\"/email: \"$ssl_email\"/g" "$traefik_config_file"
 step_done "SSL-Zertifikat E-Mail-Adresse gesetzt"
 ((current_step++))
 
-# Wunsch-Domain für Traefik-Dashboard
-show_step $current_step $total_steps "Frage nach Wunsch-Domain für Traefik-Dashboard"
+# Domains und Cloudflare DNS-Challenge konfigurieren
+show_step $current_step $total_steps "Konfiguriere Domains und Cloudflare DNS-Challenge"
 
 # Überprüfen, ob die .env-Datei existiert
 env_file="${SCRIPT_DIR}/.env"
@@ -273,10 +276,57 @@ done
 
 # Wunsch-Domain in der .env-Datei setzen
 sed -i "s/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=.*/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(\`$dashboard_domain\`)/" "$env_file"
-echo "" >> "$env_file"  # Leere Zeile hinzufügen, um korrektes Layout zu gewährleisten
+
+# Hauptdomain für das Wildcard-Zertifikat abfragen. Der Wildcard-SAN wird
+# automatisch aus derselben Domain gebildet.
+while true; do
+  read -p "Bitte gib die Hauptdomain für das Zertifikat ein (z. B. example.com): " cert_domain
+  cert_domain=$(echo "$cert_domain" | sed -e 's|^http[s]\?://||' -e 's|^\*\.||' -e 's|/$||')
+
+  if validate_domain "$cert_domain"; then
+    read -p "Zertifikat für $cert_domain und *.$cert_domain konfigurieren? [Y/n]: " confirm_cert_domain
+    confirm_cert_domain=${confirm_cert_domain:-y}
+    confirm_cert_domain=$(echo "$confirm_cert_domain" | tr '[:upper:]' '[:lower:]')
+    if [ "$confirm_cert_domain" = "y" ]; then
+      break
+    fi
+  else
+    echo -e "${red}Ungültiges Domain-Format. Bitte versuche es erneut.${nc}"
+  fi
+done
+
+sed -i "s/^TRAEFIK_CERT_DOMAIN=.*/TRAEFIK_CERT_DOMAIN=$cert_domain/" "$env_file"
+sed -i "s/^TRAEFIK_CERT_WILDCARD=.*/TRAEFIK_CERT_WILDCARD=*.$cert_domain/" "$env_file"
+
+# Cloudflare API-Token verdeckt abfragen und in Traefiks nicht versionierte
+# Umgebungsdatei schreiben.
+traefik_env_file="${SCRIPT_DIR}/data/traefik/.env"
+if [ ! -f "$traefik_env_file" ]; then
+  echo -e "${red}Die Datei $traefik_env_file existiert nicht.${nc}"
+  exit 1
+fi
+
+while true; do
+  read -rsp "Bitte gib den Cloudflare DNS API-Token ein: " cloudflare_api_token
+  echo
+  if [[ "$cloudflare_api_token" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    read -p "Cloudflare API-Token übernehmen? [Y/n]: " confirm_cloudflare_token
+    confirm_cloudflare_token=${confirm_cloudflare_token:-y}
+    confirm_cloudflare_token=$(echo "$confirm_cloudflare_token" | tr '[:upper:]' '[:lower:]')
+    if [ "$confirm_cloudflare_token" = "y" ]; then
+      break
+    fi
+  else
+    echo -e "${red}Der Token ist leer oder enthält ungültige Zeichen.${nc}"
+  fi
+done
+
+sed -i "s|^CF_DNS_API_TOKEN=.*|CF_DNS_API_TOKEN=$cloudflare_api_token|" "$traefik_env_file"
+chmod 600 "$env_file" "$traefik_env_file"
+unset cloudflare_api_token
 
 # Schritt abgeschlossen
-step_done "Traefik-Domain gesetzt"
+step_done "Domains und Cloudflare DNS-Challenge konfiguriert"
 ((current_step++))
 
 # CrowdSec und Firewall-Konfiguration
@@ -359,9 +409,35 @@ step_done "Firewall-Bouncer angepasst"
 
 # Dashboard-Benutzer erstellen
 show_step $current_step $total_steps "Erstelle Benutzer für Traefik-Dashboard"
-read -p "Bitte gib den gewünschten Benutzernamen für das Dashboard ein: " dashboard_user
-htpasswd_file="/opt/containers/traefik-crowdsec-stack/data/traefik/.htpasswd"
-sudo htpasswd -c "$htpasswd_file" "$dashboard_user"
+htpasswd_file="${SCRIPT_DIR}/data/traefik/.htpasswd"
+
+# Ein von Docker irrtümlich angelegtes, leeres Bind-Mount-Verzeichnis entfernen.
+if [ -d "$htpasswd_file" ]; then
+  if ! rmdir "$htpasswd_file"; then
+    echo -e "${red}$htpasswd_file ist ein nicht leeres Verzeichnis und kann nicht als htpasswd-Datei verwendet werden.${nc}"
+    exit 1
+  fi
+fi
+
+while true; do
+  read -p "Bitte gib den gewünschten Benutzernamen für das Dashboard ein: " dashboard_user
+  if [[ "$dashboard_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    break
+  fi
+  echo -e "${red}Der Benutzername darf nur Buchstaben, Zahlen, Punkt, Unterstrich und Bindestrich enthalten.${nc}"
+done
+
+echo "Bitte gib das Passwort zweimal ein:"
+if ! htpasswd -cB "$htpasswd_file" "$dashboard_user"; then
+  echo -e "${red}Die htpasswd-Datei konnte nicht erstellt werden.${nc}"
+  exit 1
+fi
+
+chmod 600 "$htpasswd_file"
+if [ ! -s "$htpasswd_file" ] || [ ! -f "$htpasswd_file" ]; then
+  echo -e "${red}$htpasswd_file wurde nicht als gültige Datei erstellt.${nc}"
+  exit 1
+fi
 step_done "Dashboard-Benutzer erstellt"
 ((current_step++))
 
