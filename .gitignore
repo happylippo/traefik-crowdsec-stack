@@ -61,6 +61,8 @@ Temporary Items
 .env
 .htpasswd
 acme_letsencrypt.json
+acme_cloudflare.json
+acme_desec.json
 tls_letsencrypt.json
 !.sample
 
