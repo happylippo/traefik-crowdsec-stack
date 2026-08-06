@@ -264,7 +264,7 @@ while true; do
   fi
 done
 
-sed -i "s/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=.*/SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(\\`$dashboard_domain\\`)/" "$env_file"
+sed -i 's|^SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=.*|SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=HOST(`'"$dashboard_domain"'`)|' "$env_file"
 
 echo "Welcher Zertifikatsresolver soll verwendet werden?"
 echo "1) tls_resolver        (TLS-ALPN-01, kein API-Token, keine Wildcards)"
