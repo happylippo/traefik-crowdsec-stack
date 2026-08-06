@@ -46,6 +46,13 @@ sudo chmod +x first_install.sh
 sudo ./first_install.sh
 ```
 
+Das Installationsskript fragt interaktiv nach Dashboard-Domain,
+Zertifikats-Hauptdomain, Cloudflare-DNS-API-Token sowie Benutzername und Passwort
+für das Traefik-Dashboard. Aus der Zertifikats-Hauptdomain werden
+`TRAEFIK_CERT_DOMAIN` und `TRAEFIK_CERT_WILDCARD` automatisch gesetzt. Der
+Cloudflare-Token wird verdeckt eingegeben und ausschließlich in der lokalen
+`data/traefik/.env` gespeichert.
+
 ## Manuelle Anleitung
 ![Ubuntu 20.04 - Testing](https://img.shields.io/badge/Ubuntu_20.04-07--10--2024-orange?logo=ubuntu)
 ![Ubuntu 22.04 - Testing](https://img.shields.io/badge/Ubuntu_22.04-07--10--2024-orange?logo=ubuntu)
@@ -314,7 +321,7 @@ vorausgesetzt; insbesondere werden keine Client-Zertifikate benötigt.
 Erstellen Sie einen Benutzer und ein Passwort für die HTTP-Basic-Authentifizierung im Traefik-Dashboard:
 
 ```bash
-htpasswd -c /opt/containers/traefik-crowdsec-stack/data/traefik/.htpasswd <deinBenutzername>
+htpasswd -cB data/traefik/.htpasswd <deinBenutzername>
 ```
 
 ### 8. Firewall Bouncer (optional)
