@@ -123,17 +123,20 @@ Fügen Sie Ihre SSL-Zertifikats-E-Mail-Adresse und die gewünschte Domain für d
         acme:
           email: "deine@email.de"
           storage: "/etc/traefik/acme_letsencrypt.json"
+          keyType: EC384
           httpChallenge:
             entryPoint: web
       tls_resolver:
         acme:
           email: "deine@email.de"
           storage: "/etc/traefik/tls_letsencrypt.json"
+          keyType: EC384
           tlsChallenge: {}
       cloudflare_resolver:
         acme:
           email: "deine@email.de"
           storage: "/etc/traefik/acme_cloudflare.json"
+          keyType: EC384
           dnsChallenge:
             provider: cloudflare
             resolvers:
