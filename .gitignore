@@ -69,4 +69,4 @@ data/crowdsec/data
 data/traefik/traefik.yml
 data/traefik/dynamic_conf/*.yml
 data/traefik/dynamic_conf/*.yaml
-data/traefik/secrets/
+data/traefik/secrets/crowdsec_lapi_key
