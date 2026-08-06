@@ -6,7 +6,7 @@ Prüfung übernimmt direkt das
 [`crowdsec-bouncer-traefik-plugin`](https://github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin)
 in Version `v1.7.1`.
 
-Als Reverse Proxy wird standardmäßig Traefik `v3.7.10` verwendet. Optional
+Als Reverse Proxy wird standardmäßig Traefik `v3.7` verwendet. Optional
 können Zertifikate über eine Cloudflare-DNS-Challenge ausgestellt und
 Cloudflare-Proxy-Verbindungen mit verifizierten Forwarded Headers verarbeitet
 werden.
