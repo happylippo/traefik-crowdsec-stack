@@ -109,6 +109,8 @@ cp data/traefik/dynamic_conf/http.middlewares.default-security-headers.yml.sampl
 cp data/traefik/dynamic_conf/http.middlewares.gzip.yml.sample data/traefik/dynamic_conf/http.middlewares.gzip.yml
 cp data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml.sample data/traefik/dynamic_conf/http.middlewares.traefik-dashboard-auth.yml
 cp data/traefik/dynamic_conf/tls.yml.sample data/traefik/dynamic_conf/tls.yml
+cp data/traefik/.htpasswd.sample data/traefik/.htpasswd
+chmod 600 data/traefik/.htpasswd
 ```
 
 ### 5. SSL-Zertifikate und Domain konfigurieren
