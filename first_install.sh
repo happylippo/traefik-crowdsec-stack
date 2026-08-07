@@ -379,9 +379,48 @@ step_done "Domains und Zertifikatsresolver konfiguriert"
 ((current_step++))
 
 # CrowdSec und Firewall-Konfiguration
-show_step $current_step $total_steps "CrowdSec einmalig starten und herunterfahren"
-docker compose up crowdsec -d && docker compose down
-step_done "CrowdSec gestartet und heruntergefahren"
+show_step $current_step $total_steps "CrowdSec initialisieren und Bouncer registrieren"
+
+if ! docker compose up -d crowdsec; then
+  echo -e "${red}CrowdSec konnte nicht gestartet werden.${nc}"
+  exit 1
+fi
+
+# cscli benötigt eine vollständig initialisierte CrowdSec-Datenbank. Deshalb
+# warten wir nicht nur auf den Container-Start, sondern auf den erfolgreichen
+# Datenbankzugriff über cscli innerhalb des Containers.
+crowdsec_ready=false
+for _ in {1..30}; do
+  if docker compose exec -T crowdsec cscli bouncers list >/dev/null 2>&1; then
+    crowdsec_ready=true
+    break
+  fi
+  sleep 2
+done
+
+if [ "$crowdsec_ready" != "true" ]; then
+  echo -e "${red}CrowdSec wurde nicht rechtzeitig betriebsbereit.${nc}"
+  docker compose logs crowdsec
+  docker compose down
+  exit 1
+fi
+
+# Die zufällig erzeugten Schlüssel müssen zusätzlich in der CrowdSec-LAPI
+# registriert werden. Vorhandene Einträge werden ersetzt, damit die in den
+# Bouncer-Konfigurationen hinterlegten Schlüssel garantiert übereinstimmen.
+if ! docker compose exec -T crowdsec cscli bouncers delete TRAEFIK FIREWALL --ignore-missing \
+  || ! docker compose exec -T crowdsec cscli bouncers add TRAEFIK --key "$BOUNCER_KEY_TRAEFIK_PASSWORD" \
+  || ! docker compose exec -T crowdsec cscli bouncers add FIREWALL --key "$BOUNCER_KEY_FIREWALL_PASSWORD"; then
+  echo -e "${red}Die CrowdSec-Bouncer konnten nicht registriert werden.${nc}"
+  docker compose down
+  exit 1
+fi
+
+echo "Registrierte CrowdSec-Bouncer:"
+docker compose exec -T crowdsec cscli bouncers list
+docker compose down
+
+step_done "CrowdSec initialisiert und Bouncer registriert"
 ((current_step++))
 
 show_step $current_step $total_steps "CrowdSec Konfiguration anpassen"
