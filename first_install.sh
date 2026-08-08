@@ -17,7 +17,7 @@ step_done() {
 }
 
 # Gesamtschritte für das Skript festlegen
-total_steps=18
+total_steps=20
 current_step=1
 
 # Setze das Arbeitsverzeichnis auf das Verzeichnis, in dem das Skript liegt
@@ -34,6 +34,23 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 step_done "Root-Rechte überprüft"
+((current_step++))
+
+# Benutzer ermitteln, der das Skript mit sudo gestartet hat
+if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = "root" ]; then
+  echo -e "${red}Bitte starte das Skript als normaler Benutzer mit sudo:${nc}"
+  echo "sudo ./first_install.sh"
+  exit 1
+fi
+install_user="$SUDO_USER"
+install_group="$(id -gn "$install_user")"
+if ! id -nG "$install_user" | grep -qw docker; then
+  echo -e "${red}Der Benutzer $install_user gehört nicht zur Gruppe docker.${nc}"
+  echo "Füge ihn zunächst hinzu:"
+  echo "sudo usermod -aG docker $install_user"
+  exit 1
+fi
+step_done "Benutzer ermittelt"
 ((current_step++))
 
 # Überprüfen, ob Docker installiert ist
@@ -529,6 +546,18 @@ fi
 step_done "Dashboard-Benutzer erstellt"
 ((current_step++))
 
+# Eigentümer der vom Installer erzeugten Projektdateien korrigieren
+show_step $current_step $total_steps "Setze Eigentümer der Projektdateien"
+
+chown -R "$install_user:$install_group" \
+  "${SCRIPT_DIR}/data"
+
+chown "$install_user:$install_group" \
+  "${SCRIPT_DIR}/.env"
+
+step_done "Eigentümer der Projektdateien gesetzt"
+((current_step++))
+
 # Letzter Hinweis und Stack starten
 show_step $current_step $total_steps "Finale Überprüfung der Firewall und Domain"
 read -p "Hast du die Ports und die Domain überprüft und sind sie korrekt? [y/n, Standard: n]: " confirmation
@@ -536,7 +565,9 @@ confirmation=${confirmation:-n}  # Setzt Standardwert auf 'n', wenn keine Eingab
 
 if [[ "$confirmation" =~ ^[Yy]$ ]]; then
   echo "Starte den Stack..."
-  docker compose up -d --remove-orphans
+  sudo -u "$install_user" docker compose \
+    --project-directory "$SCRIPT_DIR" \
+    up -d --remove-orphans
   step_done "Stack gestartet"
 else
   echo -e "${red}Bitte überprüfe die Firewall und die Domain-Einstellungen, bevor du den Stack startest.${nc}"
