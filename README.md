@@ -207,3 +207,185 @@ docker compose up -d
 Das Traefik-Dashboard sollte nun über die von Ihnen konfigurierte Domain erreichbar sein. Sie werden zur Eingabe des HTTP-Basic-Auth-Benutzernamens und Passworts aufgefordert.
 
 https://traefik.yourdomain.com
+
+### 13. Container über Traefik veröffentlichen
+
+Container können über Docker-Labels automatisch von Traefik erkannt und über einen HTTPS-Router veröffentlicht werden.
+
+Die Labels werden innerhalb des jeweiligen Services in der `compose.yml` unter `labels:` eingetragen.
+
+#### Beispiel: Traefik-Dashboard
+
+Die Konfiguration des Traefik-Dashboards sieht beispielsweise folgendermaßen aus:
+
+```yaml
+services:
+  traefik:
+    # Weitere Traefik-Konfiguration ...
+
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.traefik-dashboard.entrypoints: websecure
+      traefik.http.routers.traefik-dashboard.middlewares: traefik-dashboard-auth@file
+      traefik.http.routers.traefik-dashboard.rule: ${SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST:-HOST(`traefik.yourdomain.com`)}
+      traefik.http.routers.traefik-dashboard.service: api@internal
+      traefik.http.routers.traefik-dashboard.tls: "true"
+      traefik.http.routers.traefik-dashboard.tls.certresolver: ${SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER:-cloudflare_resolver}
+      traefik.http.routers.traefik-dashboard.tls.domains[0].main: ${TRAEFIK_CERT_DOMAIN}
+      traefik.http.routers.traefik-dashboard.tls.domains[0].sans: ${TRAEFIK_CERT_WILDCARD}
+      traefik.http.services.traefik-dashboard.loadbalancer.sticky.cookie.httpOnly: "true"
+      traefik.http.services.traefik-dashboard.loadbalancer.sticky.cookie.secure: "true"
+      traefik.http.routers.pingweb.rule: PathPrefix(`/ping`)
+      traefik.http.routers.pingweb.service: ping@internal
+      traefik.http.routers.pingweb.entrypoints: websecure
+```
+
+Die verwendeten Variablen werden in der `.env` des Stacks definiert:
+
+```dotenv
+SERVICES_TRAEFIK_LABELS_TRAEFIK_HOST=Host(`traefik.yourdomain.com`)
+SERVICES_TRAEFIK_LABELS_TRAEFIK_CERTRESOLVER=cloudflare_resolver
+
+TRAEFIK_CERT_DOMAIN=yourdomain.com
+TRAEFIK_CERT_WILDCARD=*.yourdomain.com
+```
+
+#### Normalen Container über Traefik veröffentlichen
+
+Für andere Container wird nach demselben Prinzip ein eigener Router und Service angelegt.
+
+Beispiel für einen Webdienst namens `whoami`, der intern auf Port `80` lauscht:
+
+```yaml
+services:
+  whoami:
+    image: traefik/whoami:latest
+    restart: unless-stopped
+
+    labels:
+      traefik.enable: "true"
+
+      # Router
+      traefik.http.routers.whoami.rule: Host(`whoami.yourdomain.com`)
+      traefik.http.routers.whoami.entrypoints: websecure
+      traefik.http.routers.whoami.tls: "true"
+      traefik.http.routers.whoami.tls.certresolver: cloudflare_resolver
+
+      # Traefik-Middlewares
+      traefik.http.routers.whoami.middlewares: default@file
+
+      # Service
+      traefik.http.services.whoami.loadbalancer.server.port: "80"
+
+    networks:
+      - proxy
+```
+
+Die einzelnen Labels haben folgende Aufgaben:
+
+| Label                                                   | Funktion                                                   |
+| ------------------------------------------------------- | ---------------------------------------------------------- |
+| `traefik.enable`                                        | Aktiviert die Traefik-Konfiguration für den Container      |
+| `traefik.http.routers.<name>.rule`                      | Legt fest, über welche Domain der Container erreichbar ist |
+| `traefik.http.routers.<name>.entrypoints`               | Legt den verwendeten Traefik-EntryPoint fest               |
+| `traefik.http.routers.<name>.tls`                       | Aktiviert TLS/HTTPS                                        |
+| `traefik.http.routers.<name>.tls.certresolver`          | Legt den ACME Certificate Resolver fest                    |
+| `traefik.http.routers.<name>.middlewares`               | Bindet vorhandene Traefik-Middlewares ein                  |
+| `traefik.http.services.<name>.loadbalancer.server.port` | Gibt den internen Port des Containers an                   |
+
+Dabei muss `<name>` durch einen eindeutigen Namen für den jeweiligen Router beziehungsweise Service ersetzt werden.
+
+Beispiel:
+
+```yaml
+traefik.http.routers.nextcloud.rule: Host(`cloud.yourdomain.com`)
+traefik.http.services.nextcloud.loadbalancer.server.port: "11000"
+```
+
+#### Konfiguration über `.env`
+
+Domains und andere Einstellungen sollten nach Möglichkeit nicht direkt in der `compose.yml` hinterlegt werden. Sie können stattdessen über die `.env` konfiguriert werden.
+
+Beispiel:
+
+```dotenv
+WHOAMI_HOST=whoami.yourdomain.com
+TRAEFIK_CERTRESOLVER=cloudflare_resolver
+```
+
+Die Labels können anschließend auf diese Variablen zugreifen:
+
+```yaml
+labels:
+  traefik.enable: "true"
+  traefik.http.routers.whoami.rule: Host(`${WHOAMI_HOST}`)
+  traefik.http.routers.whoami.entrypoints: websecure
+  traefik.http.routers.whoami.tls: "true"
+  traefik.http.routers.whoami.tls.certresolver: ${TRAEFIK_CERTRESOLVER}
+  traefik.http.services.whoami.loadbalancer.server.port: "80"
+```
+
+#### Gemeinsames Docker-Netzwerk
+
+Damit Traefik den jeweiligen Container erreichen kann, müssen Traefik und der veröffentlichte Container mindestens ein gemeinsames Docker-Netzwerk verwenden.
+
+Wenn beispielsweise ein externes Netzwerk namens `proxy` verwendet wird:
+
+```yaml
+networks:
+  proxy:
+    external: true
+```
+
+muss dieses Netzwerk sowohl Traefik als auch dem jeweiligen Container zugewiesen werden:
+
+```yaml
+services:
+  whoami:
+    networks:
+      - proxy
+```
+
+Wenn ein Container mehrere Docker-Netzwerke verwendet, sollte zusätzlich explizit angegeben werden, welches Netzwerk Traefik verwenden soll:
+
+```yaml
+labels:
+  traefik.enable: "true"
+  traefik.docker.network: proxy
+```
+
+Eine vollständige Konfiguration sieht dann beispielsweise so aus:
+
+```yaml
+services:
+  whoami:
+    image: traefik/whoami:latest
+    restart: unless-stopped
+
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: proxy
+      traefik.http.routers.whoami.rule: Host(`${WHOAMI_HOST}`)
+      traefik.http.routers.whoami.entrypoints: websecure
+      traefik.http.routers.whoami.middlewares: default@file
+      traefik.http.routers.whoami.tls: "true"
+      traefik.http.routers.whoami.tls.certresolver: ${TRAEFIK_CERTRESOLVER}
+      traefik.http.services.whoami.loadbalancer.server.port: "80"
+
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+```
+
+> **Hinweis:** Der unter `loadbalancer.server.port` angegebene Port ist der interne Port des Containers. Der Container muss dafür nicht mit `ports:` auf dem Docker-Host veröffentlicht werden. Traefik greift über das gemeinsame Docker-Netzwerk direkt auf den Container zu.
+
+Nach dem Hinzufügen oder Ändern der Labels kann der entsprechende Stack neu erstellt werden:
+
+```bash
+docker compose up -d
+```
+
+Anschließend sollte der Router im Traefik-Dashboard unter **HTTP → Routers** und der zugehörige Service unter **HTTP → Services** erscheinen.
