@@ -1,6 +1,9 @@
 api:
   dashboard: true
 
+core:
+  strictTLSOptions: true
+
 metrics:
   prometheus:
     addRoutersLabels: true
@@ -47,6 +50,7 @@ entryPoints:
     address: ':80'
     # __CLOUDFLARE_FORWARDED_HEADERS_WEB__
     http:
+      aliasHeadersStrategy: delete
       redirections:
         entryPoint:
           to: websecure
@@ -56,6 +60,7 @@ entryPoints:
     # __CLOUDFLARE_FORWARDED_HEADERS_WEBSECURE__
     http3: {}
     http:
+      aliasHeadersStrategy: delete
       middlewares:
         - default@file
         - crowdsec@file
